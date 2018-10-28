@@ -7,6 +7,7 @@
 #include <ArduinoJson.h>
 #include "FS.h"
 
+// this is pretty much abandoned, but i'll keep it in case of emergency
 String softwareVersion = "1.0";
 
 
@@ -21,14 +22,16 @@ ADC_MODE(ADC_VCC);
 String wifiName = "";
 String wifiPass = "";
 
-unsigned long timerGoToSleep = 0;
-
 bool tryingToConnect = 0;
+unsigned long timerConnectingToWifi = 0;
+bool wifiFailedFlag = 0;
 
 bool weNeedToSend = 0;
 String messageToSend = "";
 unsigned long sendingLastTry = 0;
-unsigned long sendingCount = 0;
+unsigned long sendingBegin = 0;
+
+unsigned long timerNotDoingAnything = 0;
 
 unsigned long timersButton[16]; // timers
 
@@ -36,6 +39,12 @@ unsigned long timersButton[16]; // timers
 #define TAG_EVENT 2
 #define TAG_ERROR 3
 void Log(int tag, String message){
+	String head = "";
+	switch (tag) {
+		case 1: head = "DATA";
+		case 2: head = "EVENT";
+		case 3: head = "ERROR";
+	}
 	Serial.println(String(tag) + ": " + message);
 }
 
@@ -46,7 +55,7 @@ void goToSleep(){
 	delay(15000);
 }
 
-void setLed(bool green, bool red){
+void setLed(bool green, bool red, bool blue = false){
 	digitalWrite(PIN_LED_GREEN, green);
 	if(red){
 		analogWrite(PIN_LED_RED, 180);
@@ -54,10 +63,8 @@ void setLed(bool green, bool red){
 	else{
 		analogWrite(PIN_LED_RED, 0);
 	}
-}
 
-void doingSomething(){
-	timerGoToSleep = millis();
+	digitalWrite(2, !blue);
 }
 
 void resetConfigFile(String ssid = "Broadcom", String pass = ""){
@@ -132,6 +139,7 @@ float getVcc(){
 }
 
 void saveToSendState(bool main, bool left, bool right){
+	setLed(1, 1);
 	StaticJsonBuffer<300> buff;
 	JsonObject& json = buff.createObject();
 	json["main"] = main;
@@ -141,6 +149,7 @@ void saveToSendState(bool main, bool left, bool right){
 	json["button-software-version-device"] = softwareVersion;
 	json.printTo(messageToSend);
 	weNeedToSend = 1;
+	wifiFailedFlag = 0;
 	Log(TAG_EVENT, "Saved data to send and checked weNeedToSend flag to true");
 }
 
@@ -149,14 +158,13 @@ void setup() {
 	digitalWrite(PIN_STANDBY, 1);
 
 	pinMode(PIN_MAIN, INPUT_PULLUP);
+	pinMode(PIN_LED_GREEN, OUTPUT);
+	pinMode(PIN_LED_RED, OUTPUT);
+	Serial.begin(115200);
 	if(digitalRead(PIN_MAIN)){
 		saveToSendState(true, false, false); // TODO
 	}
 
-	Serial.begin(115200);
-	pinMode(PIN_LED_GREEN, OUTPUT);
-	pinMode(PIN_LED_RED, OUTPUT);
-	setLed(1, 1);
 	pinMode(2, OUTPUT);
     digitalWrite(2, 1);
 	Log(TAG_DATA, "Last reset: " + ESP.getResetReason());
@@ -192,8 +200,10 @@ void setup() {
 }
 
 bool asyncButtonCheck(byte pin, bool wantedState = 0, unsigned long ignoreTime = 1000){
-    if(digitalRead(pin) == wantedState &&
-        ((millis() - timersButton[pin]) > ignoreTime)){
+    if(
+		digitalRead(pin) == wantedState &&
+		(millis() - timersButton[pin]) > ignoreTime
+	) {
         timersButton[pin] = millis();
         return 1;
     }
@@ -202,27 +212,64 @@ bool asyncButtonCheck(byte pin, bool wantedState = 0, unsigned long ignoreTime =
     }
 }
 
+void parseReceivedData(String data){
+	if(data.length() > 0){
+		Log(TAG_DATA, "Received data: " + data);
+		StaticJsonBuffer<300> buff;
+		JsonObject& json = buff.parseObject(data.c_str());
+		String newSsid = json["ssid"];
+		String newPass = json["password"];
+		if(newSsid != wifiName || newPass != wifiPass){
+			Log(TAG_EVENT, "Wifi data received is not the same!");
+		}
+	}
+}
+
+void wifiFailed(){
+	Log(TAG_ERROR, "Connecting to wifi failed!");
+	WiFi.disconnect();
+	wifiFailedFlag = 1;
+	tryingToConnect = 0;
+	weNeedToSend = 0;
+	setLed(0, 1, 10);
+}
+
+void sendingFailed(){
+	Log(TAG_ERROR, "Sending request failed!");
+	WiFi.disconnect();
+	tryingToConnect = 0;
+	weNeedToSend = 0;
+	setLed(0, 1);
+}
+
 void asyncWifiConnectHandle(){
     if(!tryingToConnect && !WiFi.isConnected()){
 		Log(TAG_DATA, "WiFi begin, SSID: " + wifiName + ", PASS: " + wifiPass);
         WiFi.mode(WIFI_STA);
         WiFi.begin(wifiName.c_str(), wifiPass.c_str());
+		timerConnectingToWifi = millis();
         tryingToConnect = 1;
     }
+	if(tryingToConnect && !WiFi.isConnected()){
+		if((millis() - timerConnectingToWifi) > 60 * 1000){
+			wifiFailed();
+		}
+	}
     if(WiFi.isConnected() && tryingToConnect){
 		Log(TAG_EVENT, "Connected to wifi!");
 		Log(TAG_DATA, "IP: " + WiFi.localIP().toString());
 		ArduinoOTA.setHostname("pizza-sms-button");
         ArduinoOTA.begin();
 
+		timerConnectingToWifi = millis();
         tryingToConnect = 0;
     }
 }
 
 void asyncDataSending(){
 	if(weNeedToSend && WiFi.isConnected()){
-		//doingSomething();
-		if((millis() - sendingLastTry) > 5000){
+		if((millis() - sendingLastTry) > 2000){
+			Log(TAG_DATA, "Sending time: " + String(millis() - sendingBegin));
 			Log(TAG_EVENT, "Trying to find mDNS...");
 			int a = MDNS.queryService("pizza-app", "tcp");
 			Log(TAG_DATA, String(a) + " host(s) found");
@@ -236,37 +283,55 @@ void asyncDataSending(){
 				int code = http.POST(messageToSend);
 				Log(TAG_DATA, "Http code: " + String(code));
 				String received = http.getString();
-				Log(TAG_DATA, received);
+				// succes
 				if(code >= 200 && code < 300){
 					messageToSend = "";
 					weNeedToSend = 0;
-					sendingCount = 0;
+					sendingBegin = 0;
 					Log(TAG_EVENT, "Message send succes!");
-					// you can't order pizza for next 15 seconds, for safety ;)
+					parseReceivedData(received);
+					// you can't order pizza for next 30 seconds, for safety ;)
 					setLed(1, 0);
-					delay(15000);
+					delay(30000);
 					goToSleep();
 					return;
 				}
 			}
 			sendingLastTry = millis();
 		}
+
+		if((millis() - sendingBegin) > 120 * 1000){
+			sendingFailed();
+		}
+	}
+	else{
+		sendingBegin = millis();
 	}
 }
 
 void loop() {
-	if(wifiName.length() <= 0 && wifiPass.length() <= 0){
+	// setting up the button's settings
+	if(wifiName.length() <= 0) {
 
 	}
+	// normal workflow
 	else{
-		asyncWifiConnectHandle();
+		if(!wifiFailedFlag){
+			asyncWifiConnectHandle();
+		}
 		asyncDataSending();
 		if(asyncButtonCheck(PIN_MAIN, 1)){
 			saveToSendState(true, false, false); // TODO
 		}
 
-		if((millis() - timerGoToSleep) > 30000){
-			goToSleep();
+		if(weNeedToSend == false && tryingToConnect == false){
+			if((millis() - timerNotDoingAnything) > 180 * 1000){
+				Log(TAG_EVENT, "Not pretty much doing anything so...");
+				goToSleep();
+			}
+		}
+		else{
+			timerNotDoingAnything = millis();
 		}
 	}
 	ArduinoOTA.handle();
