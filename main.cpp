@@ -15,9 +15,11 @@ String softwareVersion = "1.0";
 #define PIN_LED_GREEN 14
 #define PIN_LED_RED 12
 #define PIN_STANDBY 5
-#define PIN_FACTORY_RESET 16
+#define PIN_FACTORY_RESET 4
 
 ADC_MODE(ADC_VCC);
+
+bool setupMode = 0;
 
 String wifiName = "";
 String wifiPass = "";
@@ -35,17 +37,26 @@ unsigned long timerNotDoingAnything = 0;
 
 unsigned long timersButton[16]; // timers
 
+
+#define LOG_LEVEL 2 // all tags below this will not be printed
+
 #define TAG_DATA 1
 #define TAG_EVENT 2
 #define TAG_ERROR 3
+#define TAG_IMPORTANT 4
 void Log(int tag, String message){
+	if(tag < LOG_LEVEL){
+		return;
+	}
 	String head = "";
 	switch (tag) {
-		case 1: head = "DATA";
-		case 2: head = "EVENT";
-		case 3: head = "ERROR";
+		case 1: head = "DATA"; break;
+		case 2: head = "EVENT"; break;
+		case 3: head = "ERROR"; break;
+		case 4: head = "IMPORTANT"; break;
+		default: head = "UKNOWN"; break;
 	}
-	Serial.println(String(tag) + ": " + message);
+	Serial.println(head + ": " + message);
 }
 
 void goToSleep(){
@@ -67,7 +78,7 @@ void setLed(bool green, bool red, bool blue = false){
 	digitalWrite(2, !blue);
 }
 
-void resetConfigFile(String ssid = "Broadcom", String pass = ""){
+void resetConfigFile(String ssid = "", String pass = ""){
 	if(SPIFFS.begin()){
 		SPIFFS.remove("config.json");
 		File config = SPIFFS.open("config.json", "w");
@@ -139,7 +150,12 @@ float getVcc(){
 }
 
 void saveToSendState(bool main, bool left, bool right){
-	setLed(1, 1);
+	if(setupMode){
+		setLed(1, 1, 1);
+	}
+	else{
+		setLed(1, 1);
+	}
 	StaticJsonBuffer<300> buff;
 	JsonObject& json = buff.createObject();
 	json["main"] = main;
@@ -151,6 +167,33 @@ void saveToSendState(bool main, bool left, bool right){
 	weNeedToSend = 1;
 	wifiFailedFlag = 0;
 	Log(TAG_EVENT, "Saved data to send and checked weNeedToSend flag to true");
+}
+
+void factoryReset(){
+	Log(TAG_IMPORTANT, "Performing factory reset...");
+	resetConfigFile("", "");
+	goToSleep();
+}
+
+void factoryResetInterrupt(){
+	Log(TAG_EVENT, "Factory reset button pressed!");
+	unsigned long x = millis();
+	unsigned long ledTimer = millis();
+	bool led = 0;
+	while(!digitalRead(PIN_FACTORY_RESET)){
+		if((millis() - x) > 5000){
+			factoryReset();
+		}
+		if((millis() - ledTimer) > 100){
+			ledTimer = millis();
+			setLed(led, !led);
+		 	led = !led;
+		}
+	}
+	WiFi.disconnect();
+	tryingToConnect = 0;
+	weNeedToSend = 0;
+	setLed(0, 0);
 }
 
 void setup() {
@@ -165,13 +208,35 @@ void setup() {
 		saveToSendState(true, false, false); // TODO
 	}
 
+	pinMode(PIN_FACTORY_RESET, INPUT_PULLUP);
 	pinMode(2, OUTPUT);
     digitalWrite(2, 1);
 	Log(TAG_DATA, "Last reset: " + ESP.getResetReason());
 	loadDataFromFS();
 	WiFi.disconnect();
+	WiFi.softAPdisconnect();
 
 	Log(TAG_DATA, "Freq: " + String(ESP.getCpuFreqMHz()));
+
+	// config mode setup
+	if(wifiName.length() <= 0) {
+		Log(TAG_IMPORTANT, "We are in setup mode");
+		setupMode = 1;
+		WiFi.mode(WIFI_AP_STA);
+		delay(100);
+
+		WiFi.softAP("PIZZA BUTTON WIFI");
+
+		ArduinoOTA.setHostname("pizza-sms-button");
+        ArduinoOTA.begin();
+
+		saveToSendState(false, false, false);
+	}
+	else{
+		Log(TAG_IMPORTANT, "We are in normal mode");
+	}
+
+	attachInterrupt(digitalPinToInterrupt(PIN_FACTORY_RESET), factoryResetInterrupt, FALLING);
 
     ArduinoOTA.onStart([]() {
         String type;
@@ -220,7 +285,8 @@ void parseReceivedData(String data){
 		String newSsid = json["ssid"];
 		String newPass = json["password"];
 		if(newSsid != wifiName || newPass != wifiPass){
-			Log(TAG_EVENT, "Wifi data received is not the same!");
+			Log(TAG_IMPORTANT, "Wifi data received is not the same! Changing config file...");
+			resetConfigFile(newSsid, newPass);
 		}
 	}
 }
@@ -240,13 +306,36 @@ void sendingFailed(){
 	tryingToConnect = 0;
 	weNeedToSend = 0;
 	setLed(0, 1);
+	if(setupMode){
+		setLed(1, 0);
+		delay(5000);
+		goToSleep();
+	}
+}
+
+void sendingSucces(String received){
+	messageToSend = "";
+	weNeedToSend = 0;
+	sendingBegin = 0;
+	Log(TAG_EVENT, "Message send succes!");
+	parseReceivedData(received);
+	// you can't order pizza for next 30 seconds, for safety ;)
+	setLed(1, 0);
+	delay(5000);
+	if(setupMode){ goToSleep(); } // unless you were just setting it up
+	delay(55000);
+	goToSleep();
 }
 
 void asyncWifiConnectHandle(){
     if(!tryingToConnect && !WiFi.isConnected()){
 		Log(TAG_DATA, "WiFi begin, SSID: " + wifiName + ", PASS: " + wifiPass);
+
+		WiFi.disconnect();
+		WiFi.softAPdisconnect();
         WiFi.mode(WIFI_STA);
         WiFi.begin(wifiName.c_str(), wifiPass.c_str());
+
 		timerConnectingToWifi = millis();
         tryingToConnect = 1;
     }
@@ -256,7 +345,7 @@ void asyncWifiConnectHandle(){
 		}
 	}
     if(WiFi.isConnected() && tryingToConnect){
-		Log(TAG_EVENT, "Connected to wifi!");
+		Log(TAG_EVENT, "Connected to wifi '" + wifiName + "' !");
 		Log(TAG_DATA, "IP: " + WiFi.localIP().toString());
 		ArduinoOTA.setHostname("pizza-sms-button");
         ArduinoOTA.begin();
@@ -267,7 +356,7 @@ void asyncWifiConnectHandle(){
 }
 
 void asyncDataSending(){
-	if(weNeedToSend && WiFi.isConnected()){
+	if((weNeedToSend && WiFi.isConnected()) || setupMode){
 		if((millis() - sendingLastTry) > 2000){
 			Log(TAG_DATA, "Sending time: " + String(millis() - sendingBegin));
 			Log(TAG_EVENT, "Trying to find mDNS...");
@@ -285,15 +374,7 @@ void asyncDataSending(){
 				String received = http.getString();
 				// succes
 				if(code >= 200 && code < 300){
-					messageToSend = "";
-					weNeedToSend = 0;
-					sendingBegin = 0;
-					Log(TAG_EVENT, "Message send succes!");
-					parseReceivedData(received);
-					// you can't order pizza for next 30 seconds, for safety ;)
-					setLed(1, 0);
-					delay(30000);
-					goToSleep();
+					sendingSucces(received);
 					return;
 				}
 			}
@@ -311,9 +392,10 @@ void asyncDataSending(){
 
 void loop() {
 	// setting up the button's settings
-	if(wifiName.length() <= 0) {
-
+	if(setupMode) {
+		asyncDataSending();
 	}
+
 	// normal workflow
 	else{
 		if(!wifiFailedFlag){
