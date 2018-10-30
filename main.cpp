@@ -38,7 +38,7 @@ unsigned long timerNotDoingAnything = 0;
 unsigned long timersButton[16]; // timers
 
 
-#define LOG_LEVEL 2 // all tags below this will not be printed
+#define LOG_LEVEL 1 // all tags below this will not be printed
 
 #define TAG_DATA 1
 #define TAG_EVENT 2
@@ -318,7 +318,9 @@ void sendingSucces(String received){
 	weNeedToSend = 0;
 	sendingBegin = 0;
 	Log(TAG_EVENT, "Message send succes!");
-	parseReceivedData(received);
+	if(setupMode){
+		parseReceivedData(received);
+	}
 	// you can't order pizza for next 30 seconds, for safety ;)
 	setLed(1, 0);
 	delay(5000);
@@ -417,4 +419,10 @@ void loop() {
 		}
 	}
 	ArduinoOTA.handle();
+
+	// safety first :)
+	if(millis() > 10 * 60 * 1000){
+		Log(TAG_IMPORTANT, "SAFETY SLEEP! THIS SHOULD NEVER HAPPEN!");
+		goToSleep();
+	}
 }
