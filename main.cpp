@@ -61,7 +61,7 @@ void Log(int tag, String message){
 
 void goToSleep(){
 	Log(TAG_EVENT, "Going to sleep...");
-	delay(10);
+	delay(100);
 	digitalWrite(PIN_STANDBY, 0);
 	delay(15000);
 }
@@ -159,14 +159,17 @@ void saveToSendState(bool main, bool left, bool right){
 	StaticJsonBuffer<300> buff;
 	JsonObject& json = buff.createObject();
 	json["main"] = main;
-	json["left"] = left; // TODO
-	json["right"] = right; // TODO
+	json["left"] = left;
+	json["right"] = right;
 	json["voltage"] = getVcc();
 	json["button-software-version-device"] = softwareVersion;
+
+	messageToSend = "";
 	json.printTo(messageToSend);
 	weNeedToSend = 1;
 	wifiFailedFlag = 0;
 	Log(TAG_EVENT, "Saved data to send and checked weNeedToSend flag to true");
+	Log(TAG_DATA, "Json: " + messageToSend);
 }
 
 void factoryReset(){
@@ -250,6 +253,7 @@ void setup() {
     });
     ArduinoOTA.onEnd([]() {
         Serial.println("\nEnd");
+		goToSleep();
     });
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
         Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
@@ -261,6 +265,7 @@ void setup() {
         else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
         else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
         else if (error == OTA_END_ERROR) Serial.println("End Failed");
+		goToSleep();
     });
 }
 
@@ -307,8 +312,7 @@ void sendingFailed(){
 	weNeedToSend = 0;
 	setLed(0, 1);
 	if(setupMode){
-		setLed(1, 0);
-		delay(5000);
+		delay(10000);
 		goToSleep();
 	}
 }
@@ -323,9 +327,9 @@ void sendingSucces(String received){
 	}
 	// you can't order pizza for next 30 seconds, for safety ;)
 	setLed(1, 0);
-	delay(5000);
+	delay(10000);
 	if(setupMode){ goToSleep(); } // unless you were just setting it up
-	delay(55000);
+	delay(50000);
 	goToSleep();
 }
 
@@ -359,7 +363,7 @@ void asyncWifiConnectHandle(){
 
 void asyncDataSending(){
 	if((weNeedToSend && WiFi.isConnected()) || setupMode){
-		if((millis() - sendingLastTry) > 2000){
+		if((millis() - sendingLastTry) > 1500){
 			Log(TAG_DATA, "Sending time: " + String(millis() - sendingBegin));
 			Log(TAG_EVENT, "Trying to find mDNS...");
 			int a = MDNS.queryService("pizza-app", "tcp");
@@ -383,7 +387,7 @@ void asyncDataSending(){
 			sendingLastTry = millis();
 		}
 
-		if((millis() - sendingBegin) > 120 * 1000){
+		if((millis() - sendingBegin) > 180 * 1000){
 			sendingFailed();
 		}
 	}
