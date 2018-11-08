@@ -37,7 +37,8 @@ unsigned long timerNotDoingAnything = 0;
 
 unsigned long timersButton[16]; // timers
 
-
+WiFiServer logServer(2000);
+WiFiClient logClient;
 #define LOG_LEVEL 1 // all tags below this will not be printed
 
 #define TAG_DATA 1
@@ -56,7 +57,11 @@ void Log(int tag, String message){
 		case 4: head = "IMPORTANT"; break;
 		default: head = "UKNOWN"; break;
 	}
-	Serial.println(head + ": " + message);
+	String all = head + ": " + message;
+	Serial.println(all);
+	if(logClient.connected()){
+		logClient.println(all);
+	}
 }
 
 void goToSleep(){
@@ -210,6 +215,8 @@ void setup() {
 	if(digitalRead(PIN_MAIN)){
 		saveToSendState(true, false, false); // TODO
 	}
+
+	logServer.begin();
 
 	pinMode(PIN_FACTORY_RESET, INPUT_PULLUP);
 	pinMode(2, OUTPUT);
@@ -422,6 +429,11 @@ void loop() {
 			timerNotDoingAnything = millis();
 		}
 	}
+
+	if(logServer.hasClient()){
+		logClient = logServer.available();
+	}
+
 	ArduinoOTA.handle();
 
 	// safety first :)
