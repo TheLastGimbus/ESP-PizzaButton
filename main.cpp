@@ -14,6 +14,7 @@ String softwareVersion = "1.0";
 #define PIN_MAIN 13
 #define PIN_LED_GREEN 14
 #define PIN_LED_RED 12
+#define PIN_LED_BLUE 16
 #define PIN_STANDBY 5
 #define PIN_FACTORY_RESET 4
 
@@ -80,7 +81,7 @@ void setLed(bool green, bool red, bool blue = false){
 		analogWrite(PIN_LED_RED, 0);
 	}
 
-	digitalWrite(2, !blue);
+	digitalWrite(PIN_LED_BLUE, blue);
 }
 
 void resetConfigFile(String ssid = "", String pass = ""){
@@ -161,13 +162,15 @@ void saveToSendState(bool main, bool left, bool right){
 	else{
 		setLed(1, 1);
 	}
-	StaticJsonBuffer<300> buff;
+	StaticJsonBuffer<400> buff;
 	JsonObject& json = buff.createObject();
 	json["main"] = main;
 	json["left"] = left;
 	json["right"] = right;
 	json["voltage"] = getVcc();
 	json["button-software-version-device"] = softwareVersion;
+	json["mac"] = WiFi.macAddress();
+	json["setup-mode"] = setupMode;
 
 	messageToSend = "";
 	json.printTo(messageToSend);
@@ -211,16 +214,17 @@ void setup() {
 	pinMode(PIN_MAIN, INPUT_PULLUP);
 	pinMode(PIN_LED_GREEN, OUTPUT);
 	pinMode(PIN_LED_RED, OUTPUT);
+	pinMode(PIN_LED_BLUE, OUTPUT);
 	Serial.begin(115200);
 	if(digitalRead(PIN_MAIN)){
-		saveToSendState(true, false, false); // TODO
+		saveToSendState(true, false, false);
 	}
+
+	pinMode(PIN_FACTORY_RESET, INPUT_PULLUP);
+	attachInterrupt(digitalPinToInterrupt(PIN_FACTORY_RESET), factoryResetInterrupt, FALLING);
 
 	logServer.begin();
 
-	pinMode(PIN_FACTORY_RESET, INPUT_PULLUP);
-	pinMode(2, OUTPUT);
-    digitalWrite(2, 1);
 	Log(TAG_DATA, "Last reset: " + ESP.getResetReason());
 	loadDataFromFS();
 	WiFi.disconnect();
@@ -245,8 +249,6 @@ void setup() {
 	else{
 		Log(TAG_IMPORTANT, "We are in normal mode");
 	}
-
-	attachInterrupt(digitalPinToInterrupt(PIN_FACTORY_RESET), factoryResetInterrupt, FALLING);
 
     ArduinoOTA.onStart([]() {
         String type;
