@@ -74,14 +74,18 @@ void goToSleep(){
 
 void setLed(bool green, bool red, bool blue = false){
 	digitalWrite(PIN_LED_GREEN, green);
+
 	if(red){
 		analogWrite(PIN_LED_RED, 180);
-	}
-	else{
+	} else {
 		analogWrite(PIN_LED_RED, 0);
 	}
 
-	digitalWrite(PIN_LED_BLUE, blue);
+	if(blue){
+		analogWrite(PIN_LED_BLUE, 200);
+	} else {
+		analogWrite(PIN_LED_BLUE, 0);
+	}
 }
 
 void resetConfigFile(String ssid = "", String pass = ""){
@@ -262,7 +266,6 @@ void setup() {
     });
     ArduinoOTA.onEnd([]() {
         Serial.println("\nEnd");
-		goToSleep();
     });
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
         Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
@@ -274,7 +277,6 @@ void setup() {
         else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
         else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
         else if (error == OTA_END_ERROR) Serial.println("End Failed");
-		goToSleep();
     });
 }
 
