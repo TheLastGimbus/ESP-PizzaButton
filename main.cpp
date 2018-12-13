@@ -11,12 +11,16 @@
 String softwareVersion = "1.0";
 
 
-#define PIN_MAIN 13
+#define PIN_MAIN 13 // this is connected to NC button
 #define PIN_LED_GREEN 14
 #define PIN_LED_RED 12
 #define PIN_LED_BLUE 16
+#define PIN_FACTORY_RESET 4 // this NO button
+
+// this is connected to CH_PD / EN pin on ESP in order to keep itself awake
+// to wake board up after sleep, use button to manually connect VCC to CH_PD
 #define PIN_STANDBY 5
-#define PIN_FACTORY_RESET 4
+
 
 ADC_MODE(ADC_VCC);
 
@@ -36,9 +40,9 @@ unsigned long sendingBegin = 0;
 
 unsigned long timerNotDoingAnything = 0;
 
-unsigned long timersButton[16]; // timers
+unsigned long timersButton[16]; // buttons timers
 
-WiFiServer logServer(2000);
+WiFiServer logServer(2000); // remote logging with TCP
 WiFiClient logClient;
 #define LOG_LEVEL 1 // all tags below this will not be printed
 
