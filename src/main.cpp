@@ -216,6 +216,8 @@ void factoryResetInterrupt(){
 }
 
 void setup() {
+	Serial.begin(115200);
+	Log(TAG_EVENT, "Pizza button power-on!");
 	pinMode(PIN_STANDBY, OUTPUT);
 	digitalWrite(PIN_STANDBY, 1);
 
@@ -223,14 +225,16 @@ void setup() {
 	pinMode(PIN_LED_GREEN, OUTPUT);
 	pinMode(PIN_LED_RED, OUTPUT);
 	pinMode(PIN_LED_BLUE, OUTPUT);
-	Serial.begin(115200);
 	if(digitalRead(PIN_MAIN)){
 		saveToSendState(true, false, false);
 	}
 
 	pinMode(PIN_FACTORY_RESET, INPUT_PULLUP);
-	attachInterrupt(digitalPinToInterrupt(PIN_FACTORY_RESET), factoryResetInterrupt, FALLING);
-
+	Log(TAG_DATA, "Attatching interrupt...");
+	// TODO: Fix this
+	//attachInterrupt(digitalPinToInterrupt(PIN_FACTORY_RESET), factoryResetInterrupt, FALLING);
+	
+	Log(TAG_DATA, "Begin log server...");
 	logServer.begin();
 
 	Log(TAG_DATA, "Last reset: " + ESP.getResetReason());
