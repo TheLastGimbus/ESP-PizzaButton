@@ -434,7 +434,8 @@ void loop() {
 		if(weNeedToSend == false && tryingToConnect == false){
 			if((millis() - timerNotDoingAnything) > 180 * 1000){
 				Log(TAG_EVENT, "Not pretty much doing anything so...");
-				goToSleep();
+				Log(TAG_EVENT, "STAYIN AWAKE MOTHERFUCKERS CAUSE IT'S MONSTERK-O-METER");
+				// Nope  goToSleep();
 			}
 		}
 		else{
@@ -448,9 +449,10 @@ void loop() {
 
 	ArduinoOTA.handle();
 
-	// safety first :)
+	// safety last :)
 	if(millis() > 10 * 60 * 1000){
 		Log(TAG_IMPORTANT, "SAFETY SLEEP! THIS SHOULD NEVER HAPPEN!");
-		goToSleep();
+		Log(TAG_IMPORTANT, "And it won't happen cause it's monsterk-o-meter");
+		// nope goToSleep();
 	}
 }
